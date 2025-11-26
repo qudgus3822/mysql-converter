@@ -2,3 +2,8 @@ target/
 output/
 venv/
 __pycache__/
+backup/
+*.log
+*.tmp
+output_data/
+target_data/
