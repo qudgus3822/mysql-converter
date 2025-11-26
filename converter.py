@@ -6,6 +6,8 @@ Converts SQL Server T-SQL syntax to MySQL syntax
 
 import re
 import sys
+import os
+from pathlib import Path
 
 
 def convert_to_mysql(input_file, output_file):
@@ -31,6 +33,50 @@ def convert_to_mysql(input_file, output_file):
     )
     content = re.sub(
         r"SET ARITHABORT (ON|OFF)\s*GO\s*", "", content, flags=re.IGNORECASE
+    )
+
+    # 2025-11-19, 김병현 수정: SQL Server 테이블 힌트 제거 (WITH (NOLOCK), WITH (UPDLOCK) 등)
+    content = re.sub(r"\s+WITH\s*\(\s*NOLOCK\s*\)", "", content, flags=re.IGNORECASE)
+    content = re.sub(r"\s+WITH\s*\(\s*UPDLOCK\s*\)", "", content, flags=re.IGNORECASE)
+    content = re.sub(r"\s+WITH\s*\(\s*ROWLOCK\s*\)", "", content, flags=re.IGNORECASE)
+    content = re.sub(r"\s+WITH\s*\(\s*TABLOCK\s*\)", "", content, flags=re.IGNORECASE)
+    content = re.sub(r"\s+WITH\s*\(\s*HOLDLOCK\s*\)", "", content, flags=re.IGNORECASE)
+
+    # 2025-11-19, 김병현 수정: sysdiagrams 관련 테이블 및 코드 제거 (SQL Server 다이어그램 전용)
+    # CREATE TABLE sysdiagrams 전체 블록 제거 (세미콜론까지 모두 매칭)
+    content = re.sub(
+        r"CREATE\s+TABLE\s+`?(?:\w+\.)?sysdiagrams`?\s*\(.*?\)\s*;",
+        "-- sysdiagrams table removed (SQL Server diagram feature, not needed in MySQL)\n\n",
+        content,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    # IF OBJECT_ID 블록 제거 (END 또는 end까지)
+    content = re.sub(
+        r"IF\s+OBJECT_ID\s*\(\s*N'[^']*sysdiagram[^']*'\s*\).*?(?:END|end)\s*;?",
+        "",
+        content,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    content = re.sub(
+        r"IF\s+OBJECT_ID\s*\(\s*N'[^']*dtproperties[^']*'\s*\).*?(?:END|end)\s*;?",
+        "",
+        content,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    # 혹시 남아있는 sys.sp_addextendedproperty도 한번 더 제거
+    content = re.sub(
+        r"sys\.sp_addextendedproperty[^;]*sysdiagrams[^;]*;",
+        "",
+        content,
+        flags=re.IGNORECASE,
+    )
+
+    # 2025-11-19, 김병현 수정: SQL Server 확장 속성 제거 (sp_addextendedproperty)
+    content = re.sub(
+        r"sys\.sp_addextendedproperty\s+@name=N'[^']*'\s*,\s*@value=[^,]+\s*,?\s*(?:@level\d+type=N'[^']*'\s*,\s*@level\d+name=N'[^']*'\s*,?\s*)*\s*;?",
+        "",
+        content,
+        flags=re.IGNORECASE | re.DOTALL,
     )
 
     # Remove stored procedures (before removing GO statements)
@@ -93,8 +139,10 @@ def convert_to_mysql(input_file, output_file):
     # datetime -> DATETIME
     content = re.sub(r"\bdatetime\b", "DATETIME", content, flags=re.IGNORECASE)
 
-    # bit -> TINYINT(1)
-    content = re.sub(r"\bbit\b", "TINYINT(1)", content, flags=re.IGNORECASE)
+    # 2025-11-26, 김병현 수정: bit -> TINYINT(1) NOT NULL DEFAULT 0 (MSSQL bit는 기본적으로 0이 자동 입력됨)
+    content = re.sub(
+        r"\bbit\b", "TINYINT(1) NOT NULL DEFAULT 0", content, flags=re.IGNORECASE
+    )
 
     # bigint -> BIGINT
     content = re.sub(r"\bbigint\b", "BIGINT", content, flags=re.IGNORECASE)
@@ -125,6 +173,20 @@ def convert_to_mysql(input_file, output_file):
         r"WITH\s*\([^)]*PAD_INDEX[^)]*\)", "", content, flags=re.IGNORECASE
     )
 
+    # 2025-11-19, 김병현 수정: WITH CHECK, WITH NOCHECK 제거 (SQL Server 외래키 체크 옵션)
+    content = re.sub(r"\s+WITH\s+CHECK\s+ADD\s+", " ADD ", content, flags=re.IGNORECASE)
+    content = re.sub(
+        r"\s+WITH\s+NOCHECK\s+ADD\s+", " ADD ", content, flags=re.IGNORECASE
+    )
+
+    # 2025-11-19, 김병현 수정: ALTER TABLE ... CHECK CONSTRAINT 제거 (MySQL은 이 구문 없음)
+    content = re.sub(
+        r"ALTER\s+TABLE\s+`[^`]+`\s+CHECK\s+CONSTRAINT\s+\S+\s*;",
+        "",
+        content,
+        flags=re.IGNORECASE,
+    )
+
     # Remove TEXTIMAGE_ON [PRIMARY]
     content = re.sub(r"TEXTIMAGE_ON\s+`[^`]+`", "", content, flags=re.IGNORECASE)
 
@@ -135,8 +197,28 @@ def convert_to_mysql(input_file, output_file):
     # But keep the constraint name for primary keys and foreign keys
 
     # Convert ALTER TABLE ... ADD DEFAULT to ALTER TABLE ... ALTER COLUMN ... SET DEFAULT
+    # 2025-11-19, 김병현 수정: DEFAULT ((value)) -> DEFAULT value (이중 괄호 제거)
     content = re.sub(
-        r"ALTER\s+TABLE\s+(`[^`]+`)\s+ADD\s+CONSTRAINT\s+`[^`]+`\s+DEFAULT\s+\(([^)]+)\)\s+FOR\s+(`[^`]+`)",
+        r"ALTER\s+TABLE\s+(`[^`]+`)\s+ADD\s+CONSTRAINT\s+\S+\s+DEFAULT\s+\(\(([^)]+)\)\)\s+FOR\s+(`[^`]+`)",
+        r"ALTER TABLE \1 ALTER COLUMN \3 SET DEFAULT \2",
+        content,
+        flags=re.IGNORECASE,
+    )
+    content = re.sub(
+        r"ALTER\s+TABLE\s+(`[^`]+`)\s+ADD\s+CONSTRAINT\s+\S+\s+DEFAULT\s+\(([^)]+)\)\s+FOR\s+(`[^`]+`)",
+        r"ALTER TABLE \1 ALTER COLUMN \3 SET DEFAULT \2",
+        content,
+        flags=re.IGNORECASE,
+    )
+    # 2025-11-19, 김병현 수정: ADD check DEFAULT 또는 ADD DEFAULT (CONSTRAINT 없음)
+    content = re.sub(
+        r"ALTER\s+TABLE\s+(`[^`]+`)\s+ADD\s+(?:check\s+)?DEFAULT\s+\(\(([^)]+)\)\)\s+FOR\s+(`[^`]+`)",
+        r"ALTER TABLE \1 ALTER COLUMN \3 SET DEFAULT \2",
+        content,
+        flags=re.IGNORECASE,
+    )
+    content = re.sub(
+        r"ALTER\s+TABLE\s+(`[^`]+`)\s+ADD\s+(?:check\s+)?DEFAULT\s+\(([^)]+)\)\s+FOR\s+(`[^`]+`)",
         r"ALTER TABLE \1 ALTER COLUMN \3 SET DEFAULT \2",
         content,
         flags=re.IGNORECASE,
@@ -151,6 +233,16 @@ def convert_to_mysql(input_file, output_file):
         r"\bGETUTCDATE\s*\(\s*\)", "UTC_TIMESTAMP()", content, flags=re.IGNORECASE
     )
     content = re.sub(r"\bNEWID\s*\(\s*\)", "UUID()", content, flags=re.IGNORECASE)
+
+    # 2025-11-19, 김병현 수정: ISNULL -> IFNULL, CAST 변환
+    content = re.sub(r"\bISNULL\s*\(", "IFNULL(", content, flags=re.IGNORECASE)
+    # CAST(value AS type) -> CAST(value AS type) - MySQL도 CAST 지원하지만 타입명을 MySQL 형식으로 변경
+    content = re.sub(
+        r"\bCAST\s*\(\s*(\d+)\s+AS\s+TINYINT\s*\(\s*1\s*\)\s*\)",
+        r"CAST(\1 AS UNSIGNED)",
+        content,
+        flags=re.IGNORECASE,
+    )
 
     # Convert ALTER COLUMN to MODIFY COLUMN
     content = re.sub(r"ALTER\s+COLUMN", "MODIFY COLUMN", content, flags=re.IGNORECASE)
@@ -203,6 +295,9 @@ def convert_to_mysql(input_file, output_file):
     # Convert datetime2 to DATETIME
     content = re.sub(r"\bdatetime2\b", "DATETIME", content, flags=re.IGNORECASE)
 
+    content = re.sub(r"` NULL", "", content, flags=re.IGNORECASE)
+    content = re.sub(r"` NOT NULL", "", content, flags=re.IGNORECASE)
+
     # Handle ASC/DESC in indexes (MySQL syntax is slightly different)
     # This is generally compatible, so we leave it as is
 
@@ -231,6 +326,11 @@ SET FOREIGN_KEY_CHECKS = 1;
     # Clean up multiple newlines
     content = re.sub(r"\n{3,}", "\n\n", content)
 
+    # 2025-11-19, 김병현 수정: 최종 정리 - 혹시 남아있는 `DATETIME`(7) 패턴 처리
+    content = re.sub(
+        r"`DATETIME`\s*\(\s*7\s*\)", "DATETIME(6)", content, flags=re.IGNORECASE
+    )
+
     print(f"Writing to {output_file}...")
 
     with open(output_file, "w", encoding="utf-8") as f:
@@ -247,7 +347,32 @@ SET FOREIGN_KEY_CHECKS = 1;
 
 
 if __name__ == "__main__":
-    input_file = r"d:\Source\moducoding-web-aidt-mysql\ModuCoding.API.AIDT\current.sql"
-    output_file = r"d:\Source\moducoding-web-aidt-mysql\ModuCoding.API.AIDT\newsql.sql"
+    # 2025-11-19, 김병현 수정: target 폴더의 모든 SQL 파일을 output 폴더로 변환
+    target_dir = Path("target")
+    output_dir = Path("output")
 
-    convert_to_mysql(input_file, output_file)
+    # output 폴더가 없으면 생성
+    output_dir.mkdir(exist_ok=True)
+
+    # target 폴더가 없으면 에러 메시지 출력
+    if not target_dir.exists():
+        print(f"Error: '{target_dir}' 폴더가 존재하지 않습니다.")
+        sys.exit(1)
+
+    # target 폴더의 모든 .sql 파일 찾기
+    sql_files = list(target_dir.glob("*.sql"))
+
+    if not sql_files:
+        print(f"'{target_dir}' 폴더에 SQL 파일이 없습니다.")
+        sys.exit(0)
+
+    print(f"총 {len(sql_files)}개의 SQL 파일을 변환합니다.\n")
+
+    # 각 SQL 파일을 변환
+    for sql_file in sql_files:
+        output_file = output_dir / sql_file.name
+        print(f"[{sql_files.index(sql_file) + 1}/{len(sql_files)}] 변환 중...")
+        convert_to_mysql(str(sql_file), str(output_file))
+        print()
+
+    print(f"모든 변환이 완료되었습니다. 결과는 '{output_dir}' 폴더에 저장되었습니다.")

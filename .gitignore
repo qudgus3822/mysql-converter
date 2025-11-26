@@ -1,1 +1,4 @@
 target/
+output/
+venv/
+__pycache__/

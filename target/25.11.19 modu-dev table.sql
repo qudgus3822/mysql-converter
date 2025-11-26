@@ -332,6 +332,7 @@ CREATE TABLE [dbo].[PracticeStatus](
 	[LectureCode] [varchar](50) NULL,
 	[PracticeStartDate] [datetime] NULL,
 	[PracticeEndDate] [datetime] NULL,
+	[ClassId] [varchar](36) NULL,
 	[IsDeleted] [bit] NULL,
 	[TeacherKerisId] [varchar](50) NULL,
 	[IsGroup] [bit] NULL,
