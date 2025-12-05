@@ -6,7 +6,6 @@ Converts SQL Server T-SQL syntax to MySQL syntax
 
 import re
 import sys
-import os
 from pathlib import Path
 
 
@@ -247,43 +246,6 @@ def convert_to_mysql(input_file, output_file):
     # Convert ALTER COLUMN to MODIFY COLUMN
     content = re.sub(r"ALTER\s+COLUMN", "MODIFY COLUMN", content, flags=re.IGNORECASE)
 
-    # Fix column definition syntax
-    # Pattern: `ColumnName` `DataType` -> `ColumnName` DataType
-    # Remove backticks from data types (including CHAR with size)
-    type_pattern = r"`\s*(BIGINT|INT|SMALLINT|TINYINT|DATETIME|VARCHAR|TEXT|DECIMAL|CHAR|FLOAT|DOUBLE|REAL|NUMERIC|BIT|DATE|TIME|TIMESTAMP|BLOB|LONGTEXT|MEDIUMTEXT)\s*`"
-    content = re.sub(type_pattern, r"\1", content, flags=re.IGNORECASE)
-
-    # Fix `CHAR(36)` -> CHAR(36)
-    content = re.sub(
-        r"`CHAR\s*\(\s*(\d+)\s*\)`", r"CHAR(\1)", content, flags=re.IGNORECASE
-    )
-
-    # Fix patterns like `TINYINT(1) to TINYINT(1)
-    content = re.sub(
-        r"`\s*TINYINT\s*\(\s*1\s*\)", "TINYINT(1)", content, flags=re.IGNORECASE
-    )
-
-    # Fix patterns like TINYINT(1)` to TINYINT(1) (trailing backtick)
-    content = re.sub(
-        r"TINYINT\s*\(\s*1\s*\)\s*`", "TINYINT(1)", content, flags=re.IGNORECASE
-    )
-
-    # Fix patterns like `varchar`(20) to varchar(20)
-    content = re.sub(
-        r"`\s*(varchar|char|decimal)\s*`\s*\(", r"\1(", content, flags=re.IGNORECASE
-    )
-
-    # Fix CONSTRAINT name` to CONSTRAINT name
-    content = re.sub(r"(CONSTRAINT\s+\w+)\s*`", r"\1", content, flags=re.IGNORECASE)
-
-    # Fix VARCHAR(max) to TEXT (do this after removing backticks)
-    content = re.sub(r"VARCHAR\s*\(\s*max\s*\)", "TEXT", content, flags=re.IGNORECASE)
-
-    # Fix CONSTRAINT `name to CONSTRAINT name (remove leading backtick)
-    content = re.sub(
-        r"CONSTRAINT\s+`([^`]+)`", r"CONSTRAINT \1", content, flags=re.IGNORECASE
-    )
-
     # Fix datetime2(7) to DATETIME(6) - MySQL max precision is 6
     content = re.sub(
         r"datetime2\s*\(\s*7\s*\)", "DATETIME(6)", content, flags=re.IGNORECASE
@@ -294,9 +256,6 @@ def convert_to_mysql(input_file, output_file):
 
     # Convert datetime2 to DATETIME
     content = re.sub(r"\bdatetime2\b", "DATETIME", content, flags=re.IGNORECASE)
-
-    content = re.sub(r"` NULL", "", content, flags=re.IGNORECASE)
-    content = re.sub(r"` NOT NULL", "", content, flags=re.IGNORECASE)
 
     # Handle ASC/DESC in indexes (MySQL syntax is slightly different)
     # This is generally compatible, so we leave it as is
