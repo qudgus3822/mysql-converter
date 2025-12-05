@@ -6,19 +6,14 @@ Converts SQL Server INSERT statements to MySQL syntax
 
 import re
 import sys
-import os
 from pathlib import Path
 
 
 def convert_data_to_mysql(input_file, output_file):
     """SQL Server INSERT 문을 MySQL 구문으로 변환"""
 
-    print(f"Reading {input_file}...")
-
     with open(input_file, "r", encoding="utf-8") as f:
         content = f.read()
-
-    print("Converting SQL Server INSERT statements to MySQL...")
 
     # 2025-11-25, 김병현 수정: SQL Server 데이터 삽입 관련 명령어 제거
     # USE 데이터베이스 구문 제거
@@ -51,8 +46,58 @@ def convert_data_to_mysql(input_file, output_file):
     # 2025-11-25, 김병현 수정: dbo 스키마 제거 (대괄호 포함)
     content = re.sub(r"\[dbo\]\.", "", content)
 
-    # 2025-11-25, 김병현 수정: 대괄호를 백틱으로 변환 [table] -> `table`
-    content = re.sub(r"\[([^\]]+)\]", r"`\1`", content)
+    # 2025-11-28, 김병현 수정: 대괄호를 백틱으로 변환 [table] -> `table`
+    # 문자열 리터럴 내부의 대괄호는 변환하지 않도록 전체 content를 한 번에 처리
+    def replace_brackets_outside_strings(text):
+        """문자열 리터럴 외부의 대괄호만 백틱으로 변환"""
+        result = []
+        in_string = False
+        i = 0
+
+        while i < len(text):
+            # N' 또는 ' 로 문자열 시작 확인
+            if not in_string:
+                if i + 1 < len(text) and text[i : i + 2] in ["N'", "n'"]:
+                    result.append(text[i : i + 2])
+                    in_string = True
+                    i += 2
+                    continue
+                elif text[i] == "'":
+                    result.append(text[i])
+                    in_string = True
+                    i += 1
+                    continue
+
+            # 문자열 내부에서 종료 확인
+            if in_string and text[i] == "'":
+                result.append(text[i])
+                # 다음 문자가 '인지 확인 (이스케이프)
+                if i + 1 < len(text) and text[i + 1] == "'":
+                    result.append("'")
+                    i += 2
+                    continue
+                else:
+                    in_string = False
+                    i += 1
+                    continue
+
+            # 대괄호 처리 (문자열 외부에서만 변환)
+            if not in_string and text[i] == "[":
+                end = text.find("]", i)
+                if end != -1:
+                    result.append("`")
+                    result.append(text[i + 1 : end])
+                    result.append("`")
+                    i = end + 1
+                    continue
+
+            result.append(text[i])
+            i += 1
+
+        return "".join(result)
+
+    # 전체 content를 한 번에 처리
+    content = replace_brackets_outside_strings(content)
 
     # 2025-11-25, 김병현 수정: SQL Server의 0x (hex 리터럴) 처리
     # N'...' 변환 전에 먼저 처리하여 문자열 내부의 0x는 변환하지 않음
@@ -104,10 +149,6 @@ def convert_data_to_mysql(input_file, output_file):
         flags=re.IGNORECASE,
     )
 
-    # 2025-11-25, 김병현 수정: INSERT 문 다중 행 삽입 최적화
-    # SQL Server와 MySQL 모두 지원하지만, 세미콜론 위치 정리
-    # INSERT INTO table VALUES (...), (...), (...); 형식 유지
-
     # 2025-11-25, 김병현 수정: MySQL 헤더 추가
     mysql_header = """-- MySQL Data Insert Script
 -- Converted from SQL Server
@@ -130,12 +171,6 @@ SET FOREIGN_KEY_CHECKS = 1;
 
     # 2025-11-25, 김병현 수정: 중복 세미콜론 정리
     content = re.sub(r";+", ";", content)
-
-    # 2025-11-25, 김병현 수정: 과도한 빈 줄 정리
-    # content = re.sub(r"\n{3,}", "\n\n", content)
-
-    # 2025-11-25, 김병현 수정: 백틱이 잘못 적용된 데이터 타입 복원 (혹시 모를 경우 대비)
-    # VALUES 절 내부의 숫자나 문자열에 백틱이 잘못 들어간 경우는 거의 없지만 확인
 
     # 2025-11-25, 김병현 수정: INSERT VALUES 절 내부의 작은따옴표 이스케이프 처리
     # 모든 변환이 끝난 후 마지막에 처리하여 UNHEX 등의 변환으로 생성된 작은따옴표는 이스케이프하지 않음
@@ -167,7 +202,7 @@ SET FOREIGN_KEY_CHECKS = 1;
                                 continue
                             else:
                                 # 문자열 끝 - 내부의 단일 '를 ''로 변경
-                                content_str = ''.join(string_content)
+                                content_str = "".join(string_content)
                                 escaped = content_str.replace("'", "''")
                                 result.append(escaped)
                                 result.append("'")
@@ -183,7 +218,7 @@ SET FOREIGN_KEY_CHECKS = 1;
 
             i += 1
 
-        return ''.join(result)
+        return "".join(result)
 
     # 전체 내용에서 작은따옴표 이스케이프 처리
     content = escape_quotes_in_values(content)
@@ -192,20 +227,8 @@ SET FOREIGN_KEY_CHECKS = 1;
     # '''' (네 개) -> '' (두 개)로 변경하여 과도한 이스케이프 제거
     content = content.replace("''''", "''")
 
-    print(f"Writing to {output_file}...")
-
     with open(output_file, "w", encoding="utf-8") as f:
         f.write(content)
-
-    print(f"Conversion complete! Output written to {output_file}")
-    print(
-        "\nNote: Please review the generated SQL file as some constructs may need manual adjustment:"
-    )
-    print("- Binary data (0x...) has been converted to UNHEX() function")
-    print("- Unicode literals (N'...') have been converted to regular strings")
-    print("- IDENTITY_INSERT has been removed (not needed in MySQL)")
-    print("- Date/time functions have been converted to MySQL equivalents")
-    print("- Please verify data types match your MySQL table schema")
 
 
 if __name__ == "__main__":
@@ -234,10 +257,9 @@ if __name__ == "__main__":
     print(f"총 {len(sql_files)}개의 SQL 파일을 변환합니다.\n")
 
     # 각 SQL 파일을 변환
-    for sql_file in sql_files:
+    for i, sql_file in enumerate(sql_files, 1):
         output_file = output_dir / sql_file.name
-        print(f"[{sql_files.index(sql_file) + 1}/{len(sql_files)}] 변환 중...")
+        print(f"[{i}/{len(sql_files)}] {sql_file.name}")
         convert_data_to_mysql(str(sql_file), str(output_file))
-        print()
 
-    print(f"모든 변환이 완료되었습니다. 결과는 '{output_dir}' 폴더에 저장되었습니다.")
+    print(f"\n✓ 완료: {len(sql_files)}개 파일 변환됨 → {output_dir}/")
