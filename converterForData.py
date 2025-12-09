@@ -227,6 +227,15 @@ SET FOREIGN_KEY_CHECKS = 1;
     # '''' (네 개) -> '' (두 개)로 변경하여 과도한 이스케이프 제거
     content = content.replace("''''", "''")
 
+    # 하나의 따옴표, 세개의 따옴표는 에러로 생각하고 replace 그리고 ''s -> 의 로 변경 (''s 는 백슬래시와 합쳐져 오류가 나는 경우가 있음) target_data 폴더의 's 를 없애는 방법으로 해결하였음
+    # content = content.replace("'s ", "''s ")
+    # content = content.replace(
+    #     "'''s ", "''s "
+    # )  
+    # content = content.replace("''s ", "의 ")
+
+
+    content = content.replace("\\''s", "''s")
     with open(output_file, "w", encoding="utf-8") as f:
         f.write(content)
 
