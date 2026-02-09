@@ -234,7 +234,6 @@ SET FOREIGN_KEY_CHECKS = 1;
     # )  
     # content = content.replace("''s ", "의 ")
 
-
     content = content.replace("\\''s", "''s")
     with open(output_file, "w", encoding="utf-8") as f:
         f.write(content)
@@ -267,7 +266,7 @@ if __name__ == "__main__":
 
     # 각 SQL 파일을 변환
     for i, sql_file in enumerate(sql_files, 1):
-        output_file = output_dir / sql_file.name
+        output_file = output_dir / sql_file.name.replace("target","output")
         print(f"[{i}/{len(sql_files)}] {sql_file.name}")
         convert_data_to_mysql(str(sql_file), str(output_file))
 
